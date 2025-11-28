@@ -29,8 +29,17 @@ def load_data(name: str) -> List[Dict[str, Any]]:
         data = []
         for each in dataset:
             d = {"problem": each["prompt"],
-                 "reference_solutions": [each["canonical_solution"]],
+                 "reference_solutions": [],
                  "tests": []}
+            if each["prompt"].count("def ") > 1:
+                continue
+            lines = each["prompt"].splitlines()
+
+            def_indices = [i for i, line in enumerate(lines) if line.strip().startswith("def ")]
+            reference_solution = []
+            reference_solution.extend(lines[:def_indices[0]+1])
+            reference_solution = "\n".join(reference_solution) + "\n" + each["canonical_solution"]
+            d["reference_solutions"].append(reference_solution)
             d["tests"] = {
                 "type": "check", # assert in check function
                 "code": "def check" + each["test"].split("def check")[1]
@@ -45,10 +54,19 @@ def load_data(name: str) -> List[Dict[str, Any]]:
         data = []
         for each in dataset:
             d = {"problem": each["prompt"],
-                 "reference_solutions": each["canonical_solution"],  # <class 'list'>
+                 "reference_solutions": [],
                  "tests": []}
+            if each["prompt"].count("def ") > 1:
+                continue
+            lines = each["prompt"].splitlines()
+
+            def_indices = [i for i, line in enumerate(lines) if line.strip().startswith("def ")]
+            reference_solution = []
+            reference_solution.extend(lines[:def_indices[0]+1])
+            reference_solution = "\n".join(reference_solution) + "\n" + each["canonical_solution"]
+            d["reference_solutions"].append(reference_solution)
             d["tests"] = {
-                "type": "check",
+                "type": "check", # assert in check function
                 "code": each["test"]
             }
 
@@ -66,8 +84,10 @@ def load_data(name: str) -> List[Dict[str, Any]]:
             code = """def check():\n    """ + "\n    ".join(each["test_list"])
             d["tests"] = {
                 "type": "check",
-                "code": code
+                "code": code,
             }
+            if each.get("test_imports"):
+                d["tests"]["code"] = each["test_imports"][0] + "\n" + d["tests"]["code"] 
 
             data.append(d)
 
@@ -78,7 +98,7 @@ def load_data(name: str) -> List[Dict[str, Any]]:
         data = []
         for each in dataset["test"]:
             d = {"problem": each["prompt"],
-                 "reference_solutions": each["code"],  # <class 'list'>
+                 "reference_solutions": [each["code"]],
                  "tests": []}
             code = "def check():\n" + "\n".join("    " + line for line in each["test"].strip().splitlines())
             d["tests"] = {
