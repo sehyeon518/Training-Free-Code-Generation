@@ -6,27 +6,28 @@ import traceback
 def verify_func(sample: dict, tests: dict, timeout_sec=2.0) -> float:
     code = extract_code_from_response(sample["response"])
     if not code:
-        return {
+        reward = {
             "reward": 0.0,
             "passed": 0,
             "total": 0,
             "errors": ["no code extracted (invalid format)"],
             "penalty": 1.0
         }
+        return reward["reward"]
 
     test_type = tests.get("type")
     if test_type == "check":
         if "def check(" in sample["response"]:
             print("Warning: 'def check' found in response, please ensure only solution code is provided.")
-            return {"reward": 0.0, "passed": 0, "total": 0, "errors": ["The function 'check' should not be defined in the response."], "penalty": 1.0}
+            reward = {"reward": 0.0, "passed": 0, "total": 0, "errors": ["The function 'check' should not be defined in the response."], "penalty": 1.0}
         if sample["reference_solutions"].count("def(") > 1:
             print("Warning: Multiple function definitions found in reference solutions.")
-            return {"reward": 0.0, "passed": 0, "total": 0, "errors": ["Multiple function definitions found in reference solutions."], "penalty": 1.0}
+            reward =  {"reward": 0.0, "passed": 0, "total": 0, "errors": ["Multiple function definitions found in reference solutions."], "penalty": 1.0}
         reward = run_check_function(tests["code"], sample["response"])
     elif test_type == "stdin_stdout":
         reward = run_stdio(tests, sample["response"])
 
-    return reward
+    return reward["reward"]
 
 
 def extract_code_from_response(response: str) -> str:

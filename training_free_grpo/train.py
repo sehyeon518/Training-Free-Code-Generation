@@ -26,6 +26,12 @@ async def main(args):
         from training_free_grpo.web.prompts import PROBLEM_WITH_EXPERIENCE_TEMPLATE
         from training_free_grpo.web.experience import ExperienceUpdater
         config_name = "simple/base_search.yaml"
+    elif args.domain == "code":
+        from training_free_grpo.code.dataset import load_data
+        from training_free_grpo.code.verify import verify_func
+        from training_free_grpo.code.prompts import PROBLEM_WITH_EXPERIENCE_TEMPLATE
+        from training_free_grpo.code.experience import ExperienceUpdater
+        config_name = "simple/code_agent.yaml"
     else:
         raise ValueError(f"Unsupported domain: {args.domain}")
     
@@ -165,7 +171,7 @@ async def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Training-free GRPO")
     parser.add_argument("--mode", type=str, default="agent", required=True, choices=["prompt", "agent"], help="Mode of inference")
-    parser.add_argument("--domain", type=str, required=True, choices=["math", "web"], help="domain of the tasks (math/web)")
+    parser.add_argument("--domain", type=str, required=True, choices=["math", "web", "code"], help="domain of the tasks (math/web/code)")
     parser.add_argument("--experiment_name", type=str, required=True, help="name of experiment run")
     parser.add_argument("--dataset", type=str, required="True", help="Name of dataset")
     parser.add_argument("--dataset_truncate", type=int, default=None, help="Truncate dataset to first N samples")
@@ -173,7 +179,7 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=2, help="number of training epochs")
     parser.add_argument("--batchsize", type=int, default=64, help="batchsize")
     parser.add_argument("--grpo_n", type=int, default=5, help="number of rollouts in a group of GRPO")
-    parser.add_argument("--rollout_concurrency", type=int, default=5, help="Concurrency level for rollouts")
+    parser.add_argument("--rollout_concurrency", type=int, default=1, help="Concurrency level for rollouts")
     parser.add_argument("--rollout_temperature", type=float, default=0.7, help="Temperature for the LLM")
     parser.add_argument("--rollout_max_tokens", type=int, default=16384, help="Max tokens for each rollout batch")
     parser.add_argument("--task_timeout", type=float, default=3600, help="Timeout for each individual task in seconds")

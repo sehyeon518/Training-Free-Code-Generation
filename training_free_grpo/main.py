@@ -56,7 +56,7 @@ async def rollout_dataset(
         )
     else:
         for sample in data:
-            assert "problem" in sample and "groundtruth" in sample
+            assert "problem" in sample and ("groundtruth" in sample or "tests" in sample)
         rollouts = [{"runid": i, **sample} for i, sample in enumerate(data)]
     save_rollouts(rollouts, rollout_filename)
 
@@ -111,7 +111,8 @@ async def rollout_dataset(
                         "rollout_time": task_end_time - task_start_time,
                     }
                 )
-                sample["reward"] = verify_func(sample, sample["groundtruth"])
+                # sample["reward"] = verify_func(sample, sample["groundtruth"])
+                sample["reward"] = verify_func(sample, sample.get("groundtruth", sample["tests"]))
                 
                 # Task succeeded
                 rollouts[sample["runid"]] = sample
@@ -193,6 +194,11 @@ async def main(args):
         from training_free_grpo.web.verify import verify_func
         from training_free_grpo.web.prompts import PROBLEM_WITH_EXPERIENCE_TEMPLATE
         config_name = "simple/search_agent.yaml"
+    elif args.domain == "code":
+        from training_free_grpo.code.dataset import load_data
+        from training_free_grpo.code.verify import verify_func
+        from training_free_grpo.code.prompts import PROBLEM_WITH_EXPERIENCE_TEMPLATE
+        config_name = "simple/code_agent.yaml"
     else:
         raise ValueError(f"Unsupported domain: {args.domain}")
 
@@ -255,7 +261,7 @@ async def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Training-Free GRPO Evaluation")
     parser.add_argument("--mode", type=str, default="agent", required=True, choices=["prompt", "agent"], help="Mode of inference")
-    parser.add_argument("--domain", type=str, required=True, choices=["math", "web"], help="The domain of the experiment")
+    parser.add_argument("--domain", type=str, required=True, choices=["math", "web", "code"], help="The domain of the experiment")
     parser.add_argument("--experiment_name", type=str, required=True, help="Name of the experiment run")
     parser.add_argument("--dataset", type=str, required=True, help="Name of dataset")
     parser.add_argument("--dataset_truncate", type=int, default=None, help="Truncate dataset to first N samples")
