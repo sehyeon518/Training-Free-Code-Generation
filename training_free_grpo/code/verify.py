@@ -40,18 +40,21 @@ def extract_code_from_response(response: str) -> str:
     
 
 def run_check_function(test_code: str, code: str):
+    import re
     code = "\n".join(code.splitlines()[1:-1])
+    code = re.sub(r'\bList\s*\[[^\]]+\]\s*\(', 'list(', code)
+    code = re.sub(r'\bList\s*\(', 'list(', code)
     ns = {}
     try:
         exec(code, ns)
     except Exception as e:
         return {"reward": 0.0, "passed": 0, "total": 0, "errors": f"response_exec_error: {e}"}
-    
+
     candidates = [
-        (name, obj) for name, obj in ns.items() if callable(obj) and not name.startswith("__")
+        (name, obj) for name, obj in ns.items() if callable(obj) and not name.startswith("__") and hasattr(obj, "__code__")
     ]
     candidate_func = candidates[0][1]
-    
+
     try:
         exec(test_code, ns)
     except Exception as e:
@@ -175,6 +178,6 @@ if __name__ == "__main__":
         sample = data[i]
         sample["response"] = "```python\n" + data[i]["reference_solutions"][0] + "\n```"
         sample["reward"] = verify_func(sample, sample["tests"])
-        if sample["reward"]["reward"] < 1.0:
+        if sample["reward"] < 1.0:
             print(f"Sample {i} failed verification: {sample['reward']}")
         
