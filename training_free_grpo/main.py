@@ -112,8 +112,9 @@ async def rollout_dataset(
                     }
                 )
                 # sample["reward"] = verify_func(sample, sample["groundtruth"])
-                sample["reward"] = verify_func(sample, sample.get("groundtruth", sample["tests"]))
-                
+                exec_result = verify_func(sample, sample.get("groundtruth", sample["tests"]))
+                sample["reward"] = exec_result["reward"]
+                sample["execution_feedback"] = exec_result.get("errors", None)
                 # Task succeeded
                 rollouts[sample["runid"]] = sample
                 save_rollouts(rollouts, rollout_filename)
