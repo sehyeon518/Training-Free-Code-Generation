@@ -6,15 +6,15 @@ import traceback
 def verify_func(sample: dict, tests: dict, timeout_sec=2.0) -> float:
     code = extract_code_from_response(sample["response"])
     if not code:
-        reward = {
+        return  {
             "reward": 0.0,
             "passed": 0,
             "total": 0,
             "errors": ["no code extracted (invalid format)"],
             "penalty": 1.0
         }
-        return reward["reward"]
 
+    sample["response"] = code
     test_type = tests.get("type")
     if test_type == "check":
         if "def check(" in sample["response"]:
@@ -27,7 +27,7 @@ def verify_func(sample: dict, tests: dict, timeout_sec=2.0) -> float:
     elif test_type == "stdin_stdout":
         reward = run_stdio(tests, sample["response"])
 
-    return reward["reward"]
+    return reward
 
 
 def extract_code_from_response(response: str) -> str:
@@ -36,14 +36,11 @@ def extract_code_from_response(response: str) -> str:
     m = re.search(pattern, response, re.S)
     if m:
         return m.group(1).strip()
-    return ""
+    return response
     
 
 def run_check_function(test_code: str, code: str):
-    import re
-    code = "\n".join(code.splitlines()[1:-1])
-    code = re.sub(r'\bList\s*\[[^\]]+\]\s*\(', 'list(', code)
-    code = re.sub(r'\bList\s*\(', 'list(', code)
+    print(code)
     ns = {}
     try:
         exec(code, ns)
@@ -174,10 +171,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
     data = load_data(args.dataset)
 
-    for i in range(len(data)):
+    for i in range(1):
         sample = data[i]
-        sample["response"] = "```python\n" + data[i]["reference_solutions"][0] + "\n```"
+        sample["response"] = "def remove_first_and_last_char(s, char_to_remove):\n    first_occurrence = s.find(char_to_remove)\n    last_occurrence = s.rfind(char_to_remove)\n\n    if first_occurrence == -1:\n        return s\n    elif first_occurrence == last_occurrence:\n        # Character appears only once\n        return s[:first_occurrence] + s[first_occurrence+1:]\n    else:\n        # Character appears at least twice\n        return s[:first_occurrence] + s[first_occurrence+1:last_occurrence] + s[last_occurrence+1:]"
         sample["reward"] = verify_func(sample, sample["tests"])
-        if sample["reward"] < 1.0:
+        if isinstance(sample["reward"], int) and sample["reward"] < 1.0:
+            print(f"Sample {i} failed verification: {sample['reward']}")
+        elif isinstance(sample["reward"], dict) and sample["reward"].get("reward", 0.0) < 1.0:
             print(f"Sample {i} failed verification: {sample['reward']}")
         

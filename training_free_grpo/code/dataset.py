@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import random
 from typing import List, Dict, Any
@@ -81,7 +82,12 @@ def load_data(name: str) -> List[Dict[str, Any]]:
             d = {"problem": each["prompt"],
                  "reference_solutions": [each["code"]],
                  "tests": []}
-            code = """def check():\n    """ + "\n    ".join(each["test_list"])
+            m = re.search(r'^\s*def\s+([A-Za-z_]\w*)\s*\(', each["code"], re.MULTILINE)
+            function_name = m.group(1) if m else None
+            if function_name:
+                for i in range(len(each["test_list"])):
+                    each["test_list"][i] = each["test_list"][i].replace(f"{function_name}(", "candidate(")
+            code = """def check(candidate):\n    """ + "\n    ".join(each["test_list"])
             d["tests"] = {
                 "type": "check",
                 "code": code,
@@ -100,7 +106,12 @@ def load_data(name: str) -> List[Dict[str, Any]]:
             d = {"problem": each["prompt"],
                  "reference_solutions": [each["code"]],
                  "tests": []}
-            code = "def check():\n" + "\n".join("    " + line for line in each["test"].strip().splitlines())
+            m = re.search(r'^\s*def\s+([A-Za-z_]\w*)\s*\(', each["code"], re.MULTILINE)
+            function_name = m.group(1) if m else None
+            if function_name:
+                for i in range(len(each["test_list"])):
+                    each["test_list"][i] = each["test_list"][i].replace(f"{function_name}(", "candidate(")
+            code = """def check(candidate):\n    """ + "\n    ".join(each["test_list"])
             d["tests"] = {
                 "type": "check",
                 "code": code
