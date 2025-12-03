@@ -6,7 +6,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 from training_free_grpo.llm import LLM
-from training_free_grpo.math.prompts import (
+from training_free_grpo.code.prompts import (
     SINGLE_QUERY_CRITIQUE_TEMPLATE, 
     SINGLE_QUERY_CRITIQUE_NO_GT_TEMPLATE,
     SINGLE_ROLLOUT_SUMMARY_TEMPLATE,
@@ -94,8 +94,8 @@ class ExperienceUpdater:
                 response = self.llm.chat(
                     SINGLE_ROLLOUT_SUMMARY_TEMPLATE.format(
                         trajectory=cur["trajectories"][0]["trajectory"], 
-                        grade="This trajectory delivers **" + ("correct" if cur["reward"] else "wrong") + "** answer", 
-                        answer=cur["groundtruth"]
+                        grade="This trajectory delivers **" + ("correct" if cur["reward"] == 1.0 else "wrong") + "** answer" + "\n" + (cur.get("execution_feedback", "")), 
+                        # answer=cur["groundtruth"]
                     ) if given_ground_truth else
                     SINGLE_ROLLOUT_SUMMARY_NO_GT_TEMPLATE.format(
                         trajectory=cur["trajectories"][0]["trajectory"]
