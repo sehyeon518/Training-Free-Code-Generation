@@ -8,9 +8,7 @@ from tqdm import tqdm
 from training_free_grpo.llm import LLM
 from training_free_grpo.code.prompts import (
     SINGLE_QUERY_CRITIQUE_TEMPLATE, 
-    SINGLE_QUERY_CRITIQUE_NO_GT_TEMPLATE,
     SINGLE_ROLLOUT_SUMMARY_TEMPLATE,
-    SINGLE_ROLLOUT_SUMMARY_NO_GT_TEMPLATE,
     BATCH_EXPERIENCE_UPDATE_TEMPLATE
 )
 
@@ -91,13 +89,14 @@ class ExperienceUpdater:
 
         def process(cur):
             try:
+                execution_feedback = " ".join(cur.get("execution_feedback", []))  # Convert list to string
                 response = self.llm.chat(
                     SINGLE_ROLLOUT_SUMMARY_TEMPLATE.format(
                         trajectory=cur["trajectories"][0]["trajectory"], 
-                        grade="This trajectory delivers **" + ("correct" if cur["reward"] == 1.0 else "wrong") + "** answer" + "\n" + (cur.get("execution_feedback", "")), 
+                        grade="This trajectory delivers **" + ("correct" if cur["reward"] == 1.0 else "wrong") + "** answer" + "\n" + execution_feedback, 
                         # answer=cur["groundtruth"]
                     ) if given_ground_truth else
-                    SINGLE_ROLLOUT_SUMMARY_NO_GT_TEMPLATE.format(
+                    SINGLE_ROLLOUT_SUMMARY_TEMPLATE.format(
                         trajectory=cur["trajectories"][0]["trajectory"]
                     )
                 )
@@ -171,7 +170,7 @@ class ExperienceUpdater:
                         answer=answer,
                         experiences=formatted_experiences,
                     ) if given_ground_truth else
-                    SINGLE_QUERY_CRITIQUE_NO_GT_TEMPLATE.format(
+                    SINGLE_QUERY_CRITIQUE_TEMPLATE.format(
                         max_operations=max_operations,
                         problem=problem,
                         trajectories="\n\n".join([
