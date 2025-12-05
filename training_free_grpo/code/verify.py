@@ -1,45 +1,95 @@
 import io
 import ast
+import os
+import subprocess
+import tempfile
 from contextlib import redirect_stdout
 import traceback
 
-def verify_func(sample: dict, tests: dict, timeout_sec=2.0) -> float:
+
+def verify_func(sample: dict, tests: dict, timeout_sec: float = 2.0) -> dict:
+    language = sample.get("language", "python")
+
     code = extract_code_from_response(sample["response"])
     if not code:
-        return  {
+        return {
             "reward": 0.0,
             "passed": 0,
             "total": 0,
             "errors": ["no code extracted (invalid format)"],
-            "penalty": 1.0
+            "penalty": 1.0,
         }
 
     sample["response"] = code
     test_type = tests.get("type")
+
+    # check 타입은 HumanEval/MBPP용 → Python만 지원
     if test_type == "check":
+        if language != "python":
+            return {
+                "reward": 0.0,
+                "passed": 0,
+                "total": 0,
+                "errors": [f"check-type tests only support python, got {language}"],
+                "penalty": 1.0,
+            }
+
         if "def check(" in sample["response"]:
             print("Warning: 'def check' found in response, please ensure only solution code is provided.")
-            reward = {"reward": 0.0, "passed": 0, "total": 0, "errors": ["The function 'check' should not be defined in the response."], "penalty": 1.0}
-        if sample["reference_solutions"].count("def(") > 1:
+            return {
+                "reward": 0.0,
+                "passed": 0,
+                "total": 0,
+                "errors": ["The function 'check' should not be defined in the response."],
+                "penalty": 1.0,
+            }
+        
+        if isinstance(sample.get("reference_solutions"), list) and any(
+            ("def(" in rs) for rs in sample["reference_solutions"]
+        ):
             print("Warning: Multiple function definitions found in reference solutions.")
-            reward =  {"reward": 0.0, "passed": 0, "total": 0, "errors": ["Multiple function definitions found in reference solutions."], "penalty": 1.0}
+
         reward = run_check_function(tests["code"], sample["response"])
+
     elif test_type == "stdin_stdout":
-        reward = run_stdio(tests, sample["response"])
+        if language in ("cpp", "c++"):
+            reward = run_stdio_cpp(tests, sample["response"], timeout_sec=timeout_sec)
+        else:
+            # 혹시 python stdin_stdout 데이터셋이 있을 경우 대비
+            reward = run_stdio_python(tests, sample["response"])
+    else:
+        reward = {
+            "reward": 0.0,
+            "passed": 0,
+            "total": 0,
+            "errors": [f"unknown test type: {test_type}"],
+            "penalty": 1.0,
+        }
 
     return reward
 
 
 def extract_code_from_response(response: str) -> str:
+    """
+    ```python
+    ...
+    ```
+    ```cpp
+    ...
+    ```
+    처럼 어떤 언어든 첫 번째 코드블럭만 떼어오는 함수.
+    코드블럭이 없으면 전체 응답을 그대로 반환.
+    """
     import re
-    pattern = r"```python(.*?)```"
+
+    pattern = r"```(?:\w+)?\s*(.*?)```"
     m = re.search(pattern, response, re.S)
     if m:
         return m.group(1).strip()
-    return response
-    
+    return response.strip()
 
-def run_check_function(test_code: str, code: str):
+
+def run_check_function(test_code: str, code: str) -> dict:
     print(code)
     ns = {}
     try:
@@ -48,8 +98,17 @@ def run_check_function(test_code: str, code: str):
         return {"reward": 0.0, "passed": 0, "total": 0, "errors": f"response_exec_error: {e}"}
 
     candidates = [
-        (name, obj) for name, obj in ns.items() if callable(obj) and not name.startswith("__") and hasattr(obj, "__code__")
+        (name, obj)
+        for name, obj in ns.items()
+        if callable(obj) and not name.startswith("__") and hasattr(obj, "__code__")
     ]
+    if not candidates:
+        return {
+            "reward": 0.0,
+            "passed": 0,
+            "total": 0,
+            "errors": "no_callable_candidate_found",
+        }
     candidate_func = candidates[0][1]
 
     try:
@@ -59,6 +118,7 @@ def run_check_function(test_code: str, code: str):
     
     total = 0
     passed = 0
+    error = None
 
     try:
         check_fn = ns["check"]
@@ -70,7 +130,7 @@ def run_check_function(test_code: str, code: str):
         else:
             check_fn()
         passed = total
-    except AssertionError as e:
+    except AssertionError:
         error = []
         passed = 0
         for line in test_code.splitlines():
@@ -80,7 +140,6 @@ def run_check_function(test_code: str, code: str):
                     passed += 1
                 except Exception:
                     error.append(f"Failed assertion: {line.strip()}")
-                    pass
     except Exception as e:
         error = f"test_runtime_error: {e}"
         total = test_code.count("assert")
@@ -88,7 +147,6 @@ def run_check_function(test_code: str, code: str):
 
     reward = 1 if passed == total else 0
     return {"reward": reward, "passed": passed, "total": total, "errors": error if passed != total else None}
-    
 
 
 def parse_input_to_args(arg_str: str):
@@ -105,16 +163,21 @@ def parse_input_to_args(arg_str: str):
     return (node,)
 
 
-def run_stdio(tests: dict, code: str):
-    code = "\n".join(code.splitlines()[1:-1])
+# ===== Python stdin/stdout 실행 (혹시 있을 Python용 stdin_stdout 데이터셋 대비) =====
 
-    import io, sys
+def run_stdio_python(tests: dict, code: str) -> dict:
+    import sys
 
     ns = {}
     try:
         exec(code, ns)
-    except Exception:
-        return {"reward": 0.0, "passed": 0, "total": len(tests["input"]), "errors": "response_exec_error"}
+    except Exception as e:
+        return {
+            "reward": 0.0,
+            "passed": 0,
+            "total": len(tests["input"]),
+            "errors": f"response_exec_error: {e}",
+        }
 
     total = len(tests["input"])
     passed = 0
@@ -123,9 +186,10 @@ def run_stdio(tests: dict, code: str):
     for idx, (inp, expected_out) in enumerate(zip(tests["input"], tests["output"])):
         input_lines = inp.splitlines(keepends=True)
         input_iter = iter(input_lines)
+
         def fake_input(prompt=None):
             try:
-                return next(input_iter).rstrip('\n')
+                return next(input_iter).rstrip("\n")
             except StopIteration:
                 return ""
         
@@ -134,7 +198,10 @@ def run_stdio(tests: dict, code: str):
         buf = io.StringIO()
         try:
             with redirect_stdout(buf):
-                funcs = [obj for name, obj in ns.items() if callable(obj) and not name.startswith("__")]
+                funcs = [
+                    obj for name, obj in ns.items()
+                    if callable(obj) and not name.startswith("__")
+                ]
                 if not funcs:
                     return {
                         "reward": 0.0,
@@ -159,24 +226,111 @@ def run_stdio(tests: dict, code: str):
 
     reward = 1 if passed == total else 0
     return {
-        "reward": reward, "passed": passed, "total": total, "errors": errors if passed != total else None,}
-    
+        "reward": reward,
+        "passed": passed,
+        "total": total,
+        "errors": errors if passed != total else None,
+    }
+
+
+def run_stdio_cpp(tests: dict, code: str, timeout_sec: float = 2.0) -> dict:
+    """
+    C++ 코드를 g++로 컴파일해서, 각 테스트케이스의 input을 stdin으로 넣고
+    stdout을 tests["output"]과 비교한다.
+    """
+    total = len(tests["input"])
+    if total == 0:
+        return {"reward": 0.0, "passed": 0, "total": 0, "errors": ["no tests"]}
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        src_path = os.path.join(tmpdir, "main.cpp")
+        exe_path = os.path.join(tmpdir, "main.out")
+
+        with open(src_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        try:
+            compile_proc = subprocess.run(
+                ["g++", "-std=c++17", "-O2", src_path, "-o", exe_path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=timeout_sec,
+            )
+        except subprocess.TimeoutExpired:
+            return {
+                "reward": 0.0,
+                "passed": 0,
+                "total": total,
+                "errors": ["compile_timeout"],
+            }
+
+        if compile_proc.returncode != 0:
+            return {
+                "reward": 0.0,
+                "passed": 0,
+                "total": total,
+                "errors": [f"compile_error: {compile_proc.stderr}"],
+            }
+
+        # 각 테스트 실행
+        passed = 0
+        errors = []
+
+        for idx, (inp, expected_out) in enumerate(zip(tests["input"], tests["output"])):
+            try:
+                run_proc = subprocess.run(
+                    [exe_path],
+                    input=inp,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=timeout_sec,
+                )
+            except subprocess.TimeoutExpired:
+                errors.append(f"test_{idx}_timeout")
+                continue
+
+            if run_proc.returncode != 0:
+                errors.append(f"test_{idx}_runtime_error: {run_proc.stderr}")
+                continue
+
+            actual_out = run_proc.stdout
+            if actual_out == expected_out:
+                passed += 1
+            else:
+                errors.append(
+                    f"test_{idx}_failed: expected={expected_out!r}, got={actual_out!r}"
+                )
+
+        reward = 1 if passed == total else 0
+        return {
+            "reward": reward,
+            "passed": passed,
+            "total": total,
+            "errors": errors if passed != total else None,
+        }
+
 
 if __name__ == "__main__":
     from dataset import load_data
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", type=str, required=True, help="[CodeContests, HumanEval, HumanEvalPlus, MBPP, MBPPPlus]")
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        required=True,
+        help="[CodeContests, HumanEval, HumanEvalPlus, MBPP, MBPPPlus]",
+    )
     args = parser.parse_args()
     data = load_data(args.dataset)
 
     for i in range(1):
         sample = data[i]
-        sample["response"] = "def remove_first_and_last_char(s, char_to_remove):\n    first_occurrence = s.find(char_to_remove)\n    last_occurrence = s.rfind(char_to_remove)\n\n    if first_occurrence == -1:\n        return s\n    elif first_occurrence == last_occurrence:\n        # Character appears only once\n        return s[:first_occurrence] + s[first_occurrence+1:]\n    else:\n        # Character appears at least twice\n        return s[:first_occurrence] + s[first_occurrence+1:last_occurrence] + s[last_occurrence+1:]"
-        sample["reward"] = verify_func(sample, sample["tests"])
-        if isinstance(sample["reward"], int) and sample["reward"] < 1.0:
-            print(f"Sample {i} failed verification: {sample['reward']}")
-        elif isinstance(sample["reward"], dict) and sample["reward"].get("reward", 0.0) < 1.0:
-            print(f"Sample {i} failed verification: {sample['reward']}")
-        
+        # 테스트용: 여기서는 python 예시를 넣었지만,
+        # 실제 CodeContests 돌릴 때는 language="cpp" + C++ 코드가 들어온다고 가정.
+        sample["response"] = "print('hello')"
+        sample["language"] = sample.get("language", "python")
+        res = verify_func(sample, sample["tests"])
+        print(f"Sample {i} verification: {res}")

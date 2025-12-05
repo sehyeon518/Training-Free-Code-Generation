@@ -56,7 +56,7 @@ async def main(args):
     if args.dataset_truncate is not None:
         print(f"- truncated to {args.dataset_truncate}")
         train_data = train_data[: args.dataset_truncate]
-    assert len(train_data) % args.batchsize == 0
+    # assert len(train_data) % args.batchsize == 0
 
     # Set up the stats
     stats_filename = os.path.join(experiment_dir, "stats.json")
@@ -97,34 +97,50 @@ async def main(args):
             elif stats[f"step_{step}"]["complete"]:
                 continue
 
-            # Init
             print(f"Step {step} (Epoch {epoch}, Batch {batch_idx})")
             cur_step_dir = os.path.join(experiment_dir, f"step_{step}")
             os.makedirs(cur_step_dir, exist_ok=True)
-            
-            # Get current batch data
-            batch_data = copy.deepcopy(shuffled_data[batch_idx * args.batchsize : (batch_idx + 1) * args.batchsize])
 
-            # Load existing rollouts
+            batch_data = copy.deepcopy(
+                shuffled_data[batch_idx * args.batchsize : (batch_idx + 1) * args.batchsize]
+            )
+
             rollout_filename = os.path.join(cur_step_dir, "rollout.jsonl")
             rollouts = load_rollouts(rollout_filename)
             
-            # Retrieve experiences for this batch (except first step)
             if step > 0:
-                experience_filename = os.path.join("data", args.domain, "train", args.experiment_name, f"step_{step}/experiences.json")
+                experience_filename = os.path.join(
+                    "data",
+                    args.domain,
+                    "train",
+                    args.experiment_name,
+                    f"step_{step}/experiences.json",
+                )
                 experiences = json.load(open(experience_filename))
             else:
                 experiences = {}
-            
-            # Format the batch data with experiences
-            formatted_experiences = "\n".join([ f"[{i}]. {e}" for i, e in experiences.items() ])
-            formatted_batch_data = [{
-                "prompt": PROBLEM_WITH_EXPERIENCE_TEMPLATE.format(
-                    experiences=formatted_experiences if formatted_experiences else "None",
+
+            formatted_experiences = "\n".join(
+                [f"[{i}]. {e}" for i, e in experiences.items()]
+            ) if experiences else None
+
+            formatted_batch_data = []
+            for each in batch_data:
+                lang = each.get("language", "python")
+                exp_text = formatted_experiences if formatted_experiences else "None"
+
+                prompt = PROBLEM_WITH_EXPERIENCE_TEMPLATE.format(
+                    experiences=exp_text,
                     problem=each["problem"],
-                ) if experiences else each["problem"],
-                **each
-            } for each in batch_data]
+                    language=lang,
+                )
+
+                formatted_batch_data.append({
+                    **each,
+                    "prompt": prompt,
+                    "language": lang,
+                })
+            # ============================================================
             
             # Duplicate for GRPO
             print(f"GRPO rollout number={args.grpo_n}")
@@ -142,6 +158,7 @@ async def main(args):
                 temperature=args.rollout_temperature,
                 max_tokens=args.rollout_max_tokens,
             )
+
             stats[f"step_{step}"]["rollout"] = rollout_stats
 
             # Generate critiques and update experiences

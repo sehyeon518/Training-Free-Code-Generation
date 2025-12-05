@@ -158,7 +158,7 @@ class ExperienceUpdater:
                 problem = rollouts_per_problem[0]["problem"]
                 answer = rollouts_per_problem[0]["groundtruth"]
                 formatted_trajectories = "\n\n".join([
-                    f"Trajectory {i+1} (Answer {'correct' if each["reward"] else 'wrong'}):\n{each['trajectory_summary']}"
+                    f"Trajectory {i+1} (Answer {'correct' if each['reward'] else 'wrong'}):\n{each['trajectory_summary']}"
                     for i, each in enumerate(rollouts_per_problem)
                 ])
                 formatted_experiences = "\n".join([ f"[{i}]. {e}" for i, e in experiences.items() ]) if experiences else "None"

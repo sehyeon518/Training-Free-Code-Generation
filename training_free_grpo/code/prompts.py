@@ -1,4 +1,4 @@
-PROBLEM_WITH_EXPERIENCE_TEMPLATE = """Provide a Python solution for the following competitive programming question:
+PROBLEM_WITH_EXPERIENCE_TEMPLATE = """Provide a {language} solution for the following competitive programming question:
 {problem}
 
 When writing code, you MUST first carefully read and understand the helpful instructions and experiences:
@@ -10,9 +10,9 @@ Your previous code failed one or more execution tests. The following issues were
 
 {feedback_block}
 
-Fix your code and submit a new Python solution.
-Your response must again consist ONLY of Python code enclosed in:
-```python
+Fix your code and submit a new {language} solution.
+Your response must again consist ONLY of {language} code enclosed in:
+```{language}
 ...
 ```
 Use the backticks for code only.

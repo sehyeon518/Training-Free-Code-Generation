@@ -221,21 +221,32 @@ async def main(args):
         test_data = test_data[: args.dataset_truncate]
     
     # Insert experiences
+        # Insert experiences
     if args.experience_file:
         experiences = json.load(open(args.experience_file))
-        formatted_experiences = "\n".join([ f"[{i}]. {e}" for i, e in experiences.items() ])
-        formatted_test_data = [{
-            "prompt": PROBLEM_WITH_EXPERIENCE_TEMPLATE.format(
-                experiences=formatted_experiences if formatted_experiences else "None",
-                problem=each["problem"],
-            ),
-            **each
-        } for each in test_data]
+        formatted_experiences = "\n".join([f"[{i}]. {e}" for i, e in experiences.items()])
     else:
-        formatted_test_data = [{
-            "prompt": each["problem"],
-            **each
-        } for each in test_data]
+        experiences = None
+        formatted_experiences = None
+
+    formatted_test_data = []
+    for each in test_data:
+        lang = each.get("language", "python")
+
+        exp_text = formatted_experiences if formatted_experiences else "None"
+
+        prompt = PROBLEM_WITH_EXPERIENCE_TEMPLATE.format(
+            experiences=exp_text,
+            problem=each["problem"],
+            language=lang,    
+        )
+
+        formatted_test_data.append({
+            **each,        
+            "prompt": prompt,
+            "language": lang, 
+        })
+
     
     # Duplicate for Pass@k evaluation
     formatted_test_data = formatted_test_data * args.pass_k
