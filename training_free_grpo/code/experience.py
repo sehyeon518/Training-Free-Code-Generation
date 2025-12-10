@@ -89,11 +89,12 @@ class ExperienceUpdater:
 
         def process(cur):
             try:
-                execution_feedback = " ".join(cur.get("execution_feedback", []))  # Convert list to string
+                # execution_feedback = " ".join(cur.get("execution_feedback", []))  # Convert list to string
                 response = self.llm.chat(
                     SINGLE_ROLLOUT_SUMMARY_TEMPLATE.format(
                         trajectory=cur["trajectories"][0]["trajectory"], 
-                        grade="This trajectory delivers **" + ("correct" if cur["reward"] == 1.0 else "wrong") + "** answer" + "\n" + execution_feedback, 
+                        # grade="This trajectory delivers **" + ("correct" if cur["reward"] == 1.0 else "wrong") + "** answer" + "\n" + execution_feedback, 
+                        grade="This trajectory delivers **" + ("correct" if cur["reward"] == 1.0 else "wrong") + "** answer", # reward as math
                         # answer=cur["groundtruth"]
                     ) if given_ground_truth else
                     SINGLE_ROLLOUT_SUMMARY_TEMPLATE.format(
