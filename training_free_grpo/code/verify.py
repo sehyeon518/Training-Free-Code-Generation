@@ -1,13 +1,25 @@
 import io
 import ast
+import json
 import os
 import subprocess
+import sys
 import tempfile
 from contextlib import redirect_stdout
 import traceback
 
 
 def verify_func(sample: dict, tests: dict, timeout_sec: float = 2.0) -> dict:
+    """
+    return shape: {
+        "reward": float,
+        "passed": int,
+        "total": int,
+        "errors": list or None,
+        "execution_events_raw": list
+        "execution_trace_text": str,
+        }
+    """
     language = sample.get("language", "python")
 
     code = extract_code_from_response(sample["response"])
@@ -17,13 +29,14 @@ def verify_func(sample: dict, tests: dict, timeout_sec: float = 2.0) -> dict:
             "passed": 0,
             "total": 0,
             "errors": ["no code extracted (invalid format)"],
-            "penalty": 1.0,
+            "execution_events_raw": [],
+            "execution_trace_text": "",
         }
 
     sample["response"] = code
     test_type = tests.get("type")
 
-    # check 타입은 HumanEval/MBPP용 → Python만 지원
+    # The check type is for HumanEval/BMPP → Only supports Python
     if test_type == "check":
         if language != "python":
             return {
@@ -31,7 +44,8 @@ def verify_func(sample: dict, tests: dict, timeout_sec: float = 2.0) -> dict:
                 "passed": 0,
                 "total": 0,
                 "errors": [f"check-type tests only support python, got {language}"],
-                "penalty": 1.0,
+                "execution_events_raw": [],
+                "execution_trace_text": "",
             }
 
         if "def check(" in sample["response"]:
@@ -41,7 +55,8 @@ def verify_func(sample: dict, tests: dict, timeout_sec: float = 2.0) -> dict:
                 "passed": 0,
                 "total": 0,
                 "errors": ["The function 'check' should not be defined in the response."],
-                "penalty": 1.0,
+                "execution_events_raw": [],
+                "execution_trace_text": "",
             }
         
         if isinstance(sample.get("reference_solutions"), list) and any(
@@ -49,7 +64,7 @@ def verify_func(sample: dict, tests: dict, timeout_sec: float = 2.0) -> dict:
         ):
             print("Warning: Multiple function definitions found in reference solutions.")
 
-        reward = run_check_function(tests["code"], sample["response"])
+        return run_check_function(tests["code"], sample["response"])
 
     elif test_type == "stdin_stdout":
         if language in ("cpp", "c++"):
@@ -71,14 +86,14 @@ def verify_func(sample: dict, tests: dict, timeout_sec: float = 2.0) -> dict:
 
 def extract_code_from_response(response: str) -> str:
     """
+    Extracts the first code block from a response string, which can be in any language format like:
     ```python
     ...
     ```
     ```cpp
     ...
     ```
-    처럼 어떤 언어든 첫 번째 코드블럭만 떼어오는 함수.
-    코드블럭이 없으면 전체 응답을 그대로 반환.
+    If no code block is found, the entire response is returned as is.
     """
     import re
 
@@ -89,13 +104,22 @@ def extract_code_from_response(response: str) -> str:
     return response.strip()
 
 
+def safe_repr(value, max_len=200):
+    try:
+        s = repr(value)
+    except Exception:
+        s = object.__repr__(value)
+    if len(s) > max_len:
+        s = s[: max_len - 3] + "..."
+    return s
+
+
 def run_check_function(test_code: str, code: str) -> dict:
-    print(code)
     ns = {}
     try:
         exec(code, ns)
     except Exception as e:
-        return {"reward": 0.0, "passed": 0, "total": 0, "errors": f"response_exec_error: {e}"}
+        return {"reward": 0.0, "passed": 0, "total": 0, "errors": [f"response_exec_error: {e}"], "execution_trace_text": "", "execution_events_raw": [],}
 
     candidates = [
         (name, obj)
@@ -103,50 +127,83 @@ def run_check_function(test_code: str, code: str) -> dict:
         if callable(obj) and not name.startswith("__") and hasattr(obj, "__code__")
     ]
     if not candidates:
-        return {
-            "reward": 0.0,
-            "passed": 0,
-            "total": 0,
-            "errors": "no_callable_candidate_found",
-        }
+        return {"reward": 0.0, "passed": 0, "total": 0, "errors": ["no_callable_candidate_found"], "execution_trace_text": "", "execution_events_raw": [],}
+    
     candidate_func = candidates[0][1]
 
     try:
         exec(test_code, ns)
     except Exception as e:
-        return {"reward": 0.0, "passed": 0, "total": 0, "errors": f"testcode_exec_error: {e}"}
+        return {"reward": 0.0, "passed": 0, "total": 0, "errors": [f"testcode_exec_error: {e}"], "execution_trace_text": "", "execution_events_raw": [],}
     
     total = 0
     passed = 0
     error = None
 
+    execution_events = []
+
+    def tracer(frame, event, arg):
+        if frame.f_code is candidate_func.__code__:
+            record = {
+                "event": event,
+                "lineno": frame.f_lineno,
+                "globals": frame.f_globals.get("__name__", ""),
+                "locals": {k: safe_repr(v) for k, v in frame.f_locals.items()},
+            }
+            if event == "return":
+                record["return"] = safe_repr(arg)
+            elif event == "exception":
+                exc_type, exc_value, _ = arg
+                record["exception_type"] = safe_repr(exc_type)
+                record["exception_value"] = safe_repr(exc_value)
+
+            if event == "line":
+                return
+            execution_events.append(record)
+        return tracer
+    
     try:
         check_fn = ns["check"]
         total = test_code.count("assert")
 
         import inspect
-        if len(inspect.signature(check_fn).parameters) == 1:
-            check_fn(candidate_func)
-        else:
-            check_fn()
-        passed = total
-    except AssertionError:
-        error = []
-        passed = 0
-        for line in test_code.splitlines():
-            if "assert" in line:
-                try:
-                    exec(line.strip(), ns)
-                    passed += 1
-                except Exception:
-                    error.append(f"Failed assertion: {line.strip()}")
-    except Exception as e:
-        error = f"test_runtime_error: {e}"
-        total = test_code.count("assert")
-        passed = 0
+        sys.settrace(tracer)
+        try:
+            if len(inspect.signature(check_fn).parameters) == 1:
+                check_fn(candidate_func)
+            else:
+                check_fn()
+            passed = total
+        except AssertionError:
+            error = []
+            passed = 0
+            for line in test_code.splitlines():
+                if "assert" in line:
+                    try:
+                        exec(line.strip(), ns)
+                        passed += 1
+                    except Exception:
+                        error.append(f"Failed assertion: {line.strip()}")
+        except Exception as e:
+            error = [f"test_runtime_error: {e}"]
+            total = test_code.count("assert")
+            passed = 0
+        finally:
+            sys.settrace(None)
+    finally:
+        if sys.gettrace() is tracer:
+            sys.settrace(None)
+        
 
     reward = 1 if passed == total else 0
-    return {"reward": reward, "passed": passed, "total": total, "errors": error if passed != total else None}
+    result = {
+        "reward": reward, "passed": passed, "total": total, "errors": error if passed != total else None, "execution_events": execution_events
+    }
+
+    result["execution_trace_text"] = "\n".join(
+        json.dumps(ev, ensure_ascii=False) for ev in execution_events
+    )
+    return result
 
 
 def parse_input_to_args(arg_str: str):
@@ -176,7 +233,7 @@ def run_stdio_python(tests: dict, code: str) -> dict:
             "reward": 0.0,
             "passed": 0,
             "total": len(tests["input"]),
-            "errors": f"response_exec_error: {e}",
+            "errors": [f"response_exec_error: {e}"],
         }
 
     total = len(tests["input"])
@@ -207,7 +264,8 @@ def run_stdio_python(tests: dict, code: str) -> dict:
                         "reward": 0.0,
                         "passed": 0,
                         "total": total,
-                        "errors": "no_callable_function_found",
+                        "errors": ["no_callable_function_found"],
+                        
                     }
 
                 target_func = funcs[0]
@@ -328,9 +386,8 @@ if __name__ == "__main__":
 
     for i in range(1):
         sample = data[i]
-        # 테스트용: 여기서는 python 예시를 넣었지만,
-        # 실제 CodeContests 돌릴 때는 language="cpp" + C++ 코드가 들어온다고 가정.
-        sample["response"] = "print('hello')"
+        # sample["response"] = sample["reference_solutions"][0] # True case
+        sample["response"] = "from typing import List\ndef add(numbers: List[float], threshold: float) -> bool:\n    summation = sum(numbers)\n    return summation" # False case
         sample["language"] = sample.get("language", "python")
         res = verify_func(sample, sample["tests"])
         print(f"Sample {i} verification: {res}")

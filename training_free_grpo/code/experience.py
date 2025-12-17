@@ -89,12 +89,14 @@ class ExperienceUpdater:
 
         def process(cur):
             try:
-                # execution_feedback = " ".join(cur.get("execution_feedback", []))  # Convert list to string
+                execution_feedback = cur.get("execution_feedback")
+
+                execution_feedback = "\n".join([f"- {fb}" for fb in execution_feedback]) if execution_feedback else ""
                 response = self.llm.chat(
                     SINGLE_ROLLOUT_SUMMARY_TEMPLATE.format(
                         trajectory=cur["trajectories"][0]["trajectory"], 
-                        # grade="This trajectory delivers **" + ("correct" if cur["reward"] == 1.0 else "wrong") + "** answer" + "\n" + execution_feedback, 
-                        grade="This trajectory delivers **" + ("correct" if cur["reward"] == 1.0 else "wrong") + "** answer", # reward as math
+                        grade="This trajectory delivers **" + ("correct" if cur["reward"] == 1.0 else "wrong") + "** answer" + "\n" + execution_feedback, 
+                        # grade="This trajectory delivers **" + ("correct" if cur["reward"] == 1.0 else "wrong") + "** answer", # reward as math
                         # answer=cur["groundtruth"]
                     ) if given_ground_truth else
                     SINGLE_ROLLOUT_SUMMARY_TEMPLATE.format(
@@ -157,7 +159,7 @@ class ExperienceUpdater:
         def process(rollouts_per_problem):
             try:
                 problem = rollouts_per_problem[0]["problem"]
-                answer = rollouts_per_problem[0]["groundtruth"]
+                # answer = rollouts_per_problem[0]["groundtruth"]
                 formatted_trajectories = "\n\n".join([
                     f"Trajectory {i+1} (Answer {'correct' if each['reward'] else 'wrong'}):\n{each['trajectory_summary']}"
                     for i, each in enumerate(rollouts_per_problem)
@@ -168,7 +170,7 @@ class ExperienceUpdater:
                         max_operations=max_operations,
                         problem=problem,
                         trajectories=formatted_trajectories,
-                        answer=answer,
+                        # answer=answer,
                         experiences=formatted_experiences,
                     ) if given_ground_truth else
                     SINGLE_QUERY_CRITIQUE_TEMPLATE.format(
