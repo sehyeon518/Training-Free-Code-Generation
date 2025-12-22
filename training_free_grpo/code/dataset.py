@@ -104,6 +104,7 @@ def load_data(name: str) -> List[Dict[str, Any]]:
     elif name == "MBPPPlus":
         dataset = load_dataset("evalplus/mbppplus")
         data = []
+        duplicated_check = set()
         for each in dataset["test"]:
             m = re.search(r'^\s*def\s+([A-Za-z_]\w*)\s*\(', each["code"], re.MULTILINE)
             function_name = m.group(1) if m else None
@@ -113,6 +114,9 @@ def load_data(name: str) -> List[Dict[str, Any]]:
                     test_list[i] = test_list[i].replace(f"{function_name}(", "candidate(")
             code = """def check(candidate):\n    """ + "\n    ".join(test_list)
 
+            if each["prompt"] in duplicated_check:
+                continue
+            duplicated_check.add(each["prompt"])
             d = {
                 "problem": each["prompt"],
                 "reference_solutions": [each["code"]],
