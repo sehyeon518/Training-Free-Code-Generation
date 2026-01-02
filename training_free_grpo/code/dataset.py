@@ -71,11 +71,13 @@ def load_data(name: str) -> List[Dict[str, Any]]:
                 "language": "python",
             }
             data.append(d)
+        data = sorted(data, key=lambda x: len(x["problem"]))
         return data
 
     elif name == "MBPP":
         dataset = load_dataset("google-research-datasets/mbpp", "sanitized", split="test")
         data = []
+        duplicated_check = set()
         for each in dataset:
             m = re.search(r'^\s*def\s+([A-Za-z_]\w*)\s*\(', each["code"], re.MULTILINE)
             function_name = m.group(1) if m else None
@@ -84,6 +86,10 @@ def load_data(name: str) -> List[Dict[str, Any]]:
                 for i in range(len(test_list)):
                     test_list[i] = test_list[i].replace(f"{function_name}(", "candidate(")
             code = """def check(candidate):\n    """ + "\n    ".join(test_list)
+
+            if each["prompt"] in duplicated_check:
+                continue
+            duplicated_check.add(each["prompt"])
 
             tests = {
                 "type": "check",

@@ -78,20 +78,20 @@ class ExperienceUpdater:
 
         all_rollouts_to_process = []
         for rollouts in problems_to_rollouts.values():
-            if given_ground_truth and only_partial_correct:
-                # only for those partially correct
-                scores = [each["reward"] for each in rollouts]
-                avg_score = sum(scores) / len(scores)
-                if avg_score > 0 and avg_score < 1:
-                    all_rollouts_to_process.extend(rollouts)
-            else:
-                all_rollouts_to_process.extend(rollouts)
+            all_rollouts_to_process.extend(rollouts)
+            # if given_ground_truth and only_partial_correct:
+            #     # only for those partially correct
+            #     scores = [each["reward"] for each in rollouts]
+            #     avg_score = sum(scores) / len(scores)
+            #     if avg_score > 0 and avg_score < 1:
+            #         all_rollouts_to_process.extend(rollouts)
+            # else:
+            #     all_rollouts_to_process.extend(rollouts)
 
         def process(cur):
             try:
-                execution_feedback = cur.get("execution_feedback")
+                execution_feedback = cur.get("execution_feedback", "")
 
-                execution_feedback = "\n".join([f"- {fb}" for fb in execution_feedback]) if execution_feedback else ""
                 response = self.llm.chat(
                     SINGLE_ROLLOUT_SUMMARY_TEMPLATE.format(
                         trajectory=cur["trajectories"][0]["trajectory"], 

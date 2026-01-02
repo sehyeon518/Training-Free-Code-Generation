@@ -16,8 +16,7 @@ def verify_func(sample: dict, tests: dict, timeout_sec: float = 2.0) -> dict:
         "passed": int,
         "total": int,
         "errors": list or None,
-        "execution_events_raw": list
-        "execution_trace_text": str,
+        "execution_events": list
         }
     """
     language = sample.get("language", "python")
@@ -29,8 +28,7 @@ def verify_func(sample: dict, tests: dict, timeout_sec: float = 2.0) -> dict:
             "passed": 0,
             "total": 0,
             "errors": ["no code extracted (invalid format)"],
-            "execution_events_raw": [],
-            "execution_trace_text": "",
+            "execution_events": [],
         }
 
     sample["response"] = code
@@ -44,8 +42,7 @@ def verify_func(sample: dict, tests: dict, timeout_sec: float = 2.0) -> dict:
                 "passed": 0,
                 "total": 0,
                 "errors": [f"check-type tests only support python, got {language}"],
-                "execution_events_raw": [],
-                "execution_trace_text": "",
+                "execution_events": [],
             }
 
         if "def check(" in sample["response"]:
@@ -55,8 +52,7 @@ def verify_func(sample: dict, tests: dict, timeout_sec: float = 2.0) -> dict:
                 "passed": 0,
                 "total": 0,
                 "errors": ["The function 'check' should not be defined in the response."],
-                "execution_events_raw": [],
-                "execution_trace_text": "",
+                "execution_events": [],
             }
         
         if isinstance(sample.get("reference_solutions"), list) and any(
@@ -115,11 +111,20 @@ def safe_repr(value, max_len=200):
 
 
 def run_check_function(test_code: str, code: str) -> dict:
+    import builtins
+    
     ns = {}
+
+    def _disabled_input(*args, **kwargs):
+        raise RuntimeError("input() is disabled")
+
+    builtins_backup = builtins.__dict__.copy()
+    builtins.input = _disabled_input
     try:
-        exec(code, ns)
+        with open(os.devnull, "w") as devnull, redirect_stdout(devnull):
+            exec(code, ns)
     except Exception as e:
-        return {"reward": 0.0, "passed": 0, "total": 0, "errors": [f"response_exec_error: {e}"], "execution_trace_text": "", "execution_events_raw": [],}
+        return {"reward": 0.0, "passed": 0, "total": 0, "errors": [f"response_exec_error: {e}"], "execution_events": [],}
 
     candidates = [
         (name, obj)
@@ -127,14 +132,14 @@ def run_check_function(test_code: str, code: str) -> dict:
         if callable(obj) and not name.startswith("__") and hasattr(obj, "__code__")
     ]
     if not candidates:
-        return {"reward": 0.0, "passed": 0, "total": 0, "errors": ["no_callable_candidate_found"], "execution_trace_text": "", "execution_events_raw": [],}
+        return {"reward": 0.0, "passed": 0, "total": 0, "errors": ["no_callable_candidate_found"], "execution_events": [],}
     
     candidate_func = candidates[0][1]
 
     try:
         exec(test_code, ns)
     except Exception as e:
-        return {"reward": 0.0, "passed": 0, "total": 0, "errors": [f"testcode_exec_error: {e}"], "execution_trace_text": "", "execution_events_raw": [],}
+        return {"reward": 0.0, "passed": 0, "total": 0, "errors": [f"testcode_exec_error: {e}"], "execution_events": [],}
     
     total = 0
     passed = 0
@@ -200,9 +205,6 @@ def run_check_function(test_code: str, code: str) -> dict:
         "reward": reward, "passed": passed, "total": total, "errors": error if passed != total else None, "execution_events": execution_events
     }
 
-    result["execution_trace_text"] = "\n".join(
-        json.dumps(ev, ensure_ascii=False) for ev in execution_events
-    )
     return result
 
 

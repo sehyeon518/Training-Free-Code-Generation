@@ -107,14 +107,20 @@ async def rollout_dataset(
                     {
                         "response": res.final_output,
                         "trajectories": res.trajectories,
-                        "error": None,
                         "rollout_time": task_end_time - task_start_time,
                     }
                 )
                 # sample["reward"] = verify_func(sample, sample["groundtruth"])
                 exec_result = verify_func(sample, sample.get("groundtruth", sample["tests"]))
                 sample["reward"] = exec_result["reward"]
-                sample["execution_feedback"] = exec_result.get("errors", None)
+                exec_events = exec_result.get("execution_events", None)
+                if exec_events:
+                    sample["execution_feedback"] = "\n".join(
+                        json.dumps(ev, ensure_ascii=False) for ev in exec_events
+                    )
+                else:
+                    exec_events = exec_result.get("errors", [])
+                    sample["execution_feedback"] = "\n".join(exec_events)
                 # Task succeeded
                 rollouts[sample["runid"]] = sample
                 save_rollouts(rollouts, rollout_filename)
@@ -135,7 +141,6 @@ async def rollout_dataset(
                         {
                             "response": f"Error: {str(e)} after {max_retries} retries.",
                             "trajectories": [],
-                            "error": error_info,
                             "reward": 0,
                             "rollout_time": task_end_time - task_start_time,
                         }
@@ -220,34 +225,23 @@ async def main(args):
         print(f"- truncated to {args.dataset_truncate}")
         test_data = test_data[: args.dataset_truncate]
     
-    # Insert experiences
-        # Insert experiences
     if args.experience_file:
         experiences = json.load(open(args.experience_file))
         formatted_experiences = "\n".join([f"[{i}]. {e}" for i, e in experiences.items()])
+        formatted_test_data = [
+            {
+                "prompt": PROBLEM_WITH_EXPERIENCE_TEMPLATE.format(
+                    experiences=formatted_experiences,
+                    problem=each["problem"],
+                    language=each.get("language", "python"),    
+                ),
+                **each,
+            }
+            for each in test_data
+        ]
     else:
-        experiences = None
-        formatted_experiences = None
+        formatted_test_data = [{"prompt": each["problem"], **each} for each in test_data]
 
-    formatted_test_data = []
-    for each in test_data:
-        lang = each.get("language", "python")
-
-        exp_text = formatted_experiences if formatted_experiences else "None"
-
-        prompt = PROBLEM_WITH_EXPERIENCE_TEMPLATE.format(
-            experiences=exp_text,
-            problem=each["problem"],
-            language=lang,    
-        )
-
-        formatted_test_data.append({
-            **each,        
-            "prompt": prompt,
-            "language": lang, 
-        })
-
-    
     # Duplicate for Pass@k evaluation
     formatted_test_data = formatted_test_data * args.pass_k
     print(f"Duplicated to {len(formatted_test_data)} records for Pass@{args.pass_k} evaluation")
@@ -278,7 +272,7 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", type=str, required=True, help="Name of dataset")
     parser.add_argument("--dataset_truncate", type=int, default=None, help="Truncate dataset to first N samples")
     parser.add_argument("--experience_file", type=str, default=None)
-    parser.add_argument("--rollout_concurrency", type=int, default=5, help="Concurrency level for rollouts")
+    parser.add_argument("--rollout_concurrency", type=int, default=1, help="Concurrency level for rollouts")
     parser.add_argument("--rollout_max_tokens", type=int, default=16384, help="Max tokens for each rollout")
     parser.add_argument("--pass_k", type=int, default=1, help="Pass@k metric")
     parser.add_argument("--task_timeout", type=float, default=3600, help="Timeout for each individual task in seconds")

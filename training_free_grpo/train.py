@@ -124,22 +124,20 @@ async def main(args):
                 [f"[{i}]. {e}" for i, e in experiences.items()]
             ) if experiences else None
 
-            formatted_batch_data = []
-            for each in batch_data:
-                lang = each.get("language", "python")
-                exp_text = formatted_experiences if formatted_experiences else "None"
-
-                prompt = PROBLEM_WITH_EXPERIENCE_TEMPLATE.format(
-                    experiences=exp_text,
-                    problem=each["problem"],
-                    language=lang,
-                )
-
-                formatted_batch_data.append({
+            formatted_batch_data = [
+                {
+                    "prompt": PROBLEM_WITH_EXPERIENCE_TEMPLATE.format(
+                        experiences=formatted_experiences if formatted_experiences else "None",
+                        problem=each["problem"],
+                        language=each.get("language", "python"),
+                    )
+                    if experiences
+                    else each["problem"],
                     **each,
-                    "prompt": prompt,
-                    "language": lang,
-                })
+                }
+                for each in batch_data
+            ]
+
             # ============================================================
             
             # Duplicate for GRPO
