@@ -38,7 +38,7 @@ def load_data(name: str) -> List[Dict[str, Any]]:
             reference_solution = "\n".join(reference_solution) + "\n" + each["canonical_solution"]
 
             d = {
-                "problem": each["prompt"],
+                "problem": each["prompt"].lstrip("\n"),
                 "reference_solutions": [reference_solution],
                 "tests": {
                     "type": "check",  # assert in check function
@@ -79,12 +79,21 @@ def load_data(name: str) -> List[Dict[str, Any]]:
         data = []
         duplicated_check = set()
         for each in dataset:
-            m = re.search(r'^\s*def\s+([A-Za-z_]\w*)\s*\(', each["code"], re.MULTILINE)
-            function_name = m.group(1) if m else None
+            defs = set(re.findall(r'^\s*def\s+([A-Za-z_]\w*)\s*\(', each["code"], re.MULTILINE))
+            called = set(re.findall(r'([A-Za-z_]\w*)\s*\(', " ".join(each["test_list"])))
+
+            function_name = defs & called
+            if len(function_name) != 1:
+                continue
+            function_name = function_name.pop()
+            if function_name in ["candidate", "check"]:
+                continue
             test_list = list(each["test_list"])
-            if function_name:
-                for i in range(len(test_list)):
-                    test_list[i] = test_list[i].replace(f"{function_name}(", "candidate(")
+
+            pattern = rf'\b{re.escape(function_name)}\s*\('
+
+            for i in range(len(test_list)):
+                test_list[i] = re.sub(pattern, "candidate(", test_list[i])
             code = """def check(candidate):\n    """ + "\n    ".join(test_list)
 
             if each["prompt"] in duplicated_check:
@@ -112,8 +121,16 @@ def load_data(name: str) -> List[Dict[str, Any]]:
         data = []
         duplicated_check = set()
         for each in dataset["test"]:
-            m = re.search(r'^\s*def\s+([A-Za-z_]\w*)\s*\(', each["code"], re.MULTILINE)
-            function_name = m.group(1) if m else None
+            defs = set(re.findall(r'^\s*def\s+([A-Za-z_]\w*)\s*\(', each["code"], re.MULTILINE))
+            called = set(re.findall(r'([A-Za-z_]\w*)\s*\(', " ".join(each["test_list"])))
+
+            function_name = defs & called
+            if len(function_name) != 1:
+                continue
+            function_name = function_name.pop()
+            if function_name in ["candidate", "check"]:
+                continue
+
             test_list = list(each["test_list"])
             if function_name:
                 for i in range(len(test_list)):
