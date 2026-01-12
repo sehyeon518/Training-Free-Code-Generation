@@ -6,6 +6,7 @@ import os
 import random
 
 from training_free_grpo.main import rollout_dataset, load_rollouts
+from training_free_grpo.util_coex import *
 from utu.agents import SimpleAgent
 from utu.config import ConfigLoader
 
@@ -109,40 +110,97 @@ async def main(args):
             rollouts = load_rollouts(rollout_filename)
             
             if step > 0:
-                experience_filename = os.path.join(
-                    "data",
-                    args.domain,
-                    "train",
-                    args.experiment_name,
-                    f"step_{step}/experiences.json",
-                )
+                experience_filename = os.path.join(cur_step_dir, "experiences.json")
                 experiences = json.load(open(experience_filename))
+                experience_probs = json.load(open(os.path.join(cur_step_dir, "experience_probs.json")))
             else:
                 experiences = {}
+                experience_probs = {}
 
-            formatted_experiences = "\n".join(
-                [f"[{i}]. {e}" for i, e in experiences.items()]
-            ) if experiences else None
+            print(f"Loaded {len(experience_probs)} experience probabilities")
+            # formatted_experiences = "\n".join(
+            #     [f"[{i}]. {e}" for i, e in experiences.items()]
+            # ) if experiences else None
 
-            formatted_batch_data = [
-                {
-                    "prompt": PROBLEM_WITH_EXPERIENCE_TEMPLATE.format(
-                        experiences=formatted_experiences if formatted_experiences else "None",
-                        problem=each["problem"],
-                        language=each.get("language", "python"),
+            # formatted_batch_data = [
+            #     {
+            #         "prompt": PROBLEM_WITH_EXPERIENCE_TEMPLATE.format(
+            #             experiences=formatted_experiences if formatted_experiences else "None",
+            #             problem=each["problem"],
+            #             language=each.get("language", "python"),
+            #         )
+            #         if experiences
+            #         else each["problem"],
+            #         **each,
+            #     }
+            #     for each in batch_data
+            # ]
+
+            formatted_batch_data = []
+            rng = random.Random(42)
+            k = args.num_experiences
+            for each in batch_data: # for each problem in the batch
+                if args.experience_sampling_mode == "query":
+                    if experiences:
+                        # sampled_experiences = sample_experiences(experiences, experience_probs, k, rng)
+                        # SAMPLING
+                        sampled_experiences = sample_experiences_uniform_k(experiences, k=k)
+                        formatted_experiences = "\n".join(
+                            [f"[{i}]. {e}" for i, e in sampled_experiences.items()]
+                        )
+                    else:
+                        sampled_experiences = {}
+                        formatted_experiences = "None"
+                    
+                    prompt = (
+                        PROBLEM_WITH_EXPERIENCE_TEMPLATE.format(
+                            experiences=formatted_experiences,
+                            problem=each["problem"],
+                            language=each.get("language", "python"),
+                        ) if experiences
+                        else each["problem"]
+                    ) # Confirm the prompt for each problem
+
+                    formatted_batch_data.append(
+                        {
+                            "prompt": prompt,
+                            **each,
+                            "sampled_experience_ids": list(sampled_experiences.keys()),
+                        }
                     )
-                    if experiences
-                    else each["problem"],
-                    **each,
-                }
-                for each in batch_data
-            ]
+                elif args.experience_sampling_mode == "rollout":
+                    for rollout_idx in range(args.grpo_n):
+                        if experiences:
+                            # sampled_experiences = sample_experiences(experiences, experience_probs, k, rng)
+                            sampled_experiences = sample_experiences_uniform_k(experiences, k=k)
+                            formatted_experiences = "\n".join(
+                                [f"[{i}]. {e}" for i, e in sampled_experiences.items()]
+                            )
+                        else:
+                            sampled_experiences = {}
+                            formatted_experiences = "None"
+                        
+                        prompt = (
+                            PROBLEM_WITH_EXPERIENCE_TEMPLATE.format(
+                                experiences=formatted_experiences,
+                                problem=each["problem"],
+                                language=each.get("language", "python"),
+                            ) if experiences
+                            else each["problem"]
+                        )
 
+                        formatted_batch_data.append(
+                            {
+                                "prompt": prompt,
+                                **each,
+                                "sampled_experience_ids": list(sampled_experiences.keys()),
+                            }
+                        )
             # ============================================================
             
             # Duplicate for GRPO
             print(f"GRPO rollout number={args.grpo_n}")
-            formatted_batch_data = formatted_batch_data * args.grpo_n
+            formatted_batch_data = formatted_batch_data * args.grpo_n if args.experience_sampling_mode=="query" else formatted_batch_data
 
             # Rollout the dataset
             rollouts, rollout_stats = await rollout_dataset(
@@ -177,6 +235,18 @@ async def main(args):
                 json.dump(new_experiences, open(next_experience_filename, "w"), indent=2)
                 print(f"Saved {len(new_experiences)} experiences to {next_experience_filename}")
 
+            # Extract "saumpled_experience_ids" from partial_correct rollouts 
+            critique_path = os.path.join(cur_step_dir, "single_query_critique.json")
+            problem_results = json.load(open(critique_path, encoding="utf-8"))
+            next_experience_probs_filename = os.path.join(next_step_dir, "experience_probs.json")
+            operations = json.load(open(os.path.join(cur_step_dir, "batch_update.json")))["operations"]
+            batch_update_result = json.load(open(os.path.join(cur_step_dir, "batch_update.json")))
+            new_experience_probs = compute_next_experience_probs(
+                experiences, experience_probs, batch_update_result, operations,
+                rollout_scores=accumulate_experience_scores_from_rollouts(problem_results),
+            )
+            with open(next_experience_probs_filename, "w") as f:
+                json.dump(new_experience_probs, f, indent=2)
             # Save stats
             stats[f"step_{step}"]["complete"] = True
             json.dump(stats, open(stats_filename, "w"), indent=2)
@@ -198,6 +268,8 @@ if __name__ == "__main__":
     parser.add_argument("--rollout_temperature", type=float, default=0.7, help="Temperature for the LLM")
     parser.add_argument("--rollout_max_tokens", type=int, default=16384, help="Max tokens for each rollout batch")
     parser.add_argument("--task_timeout", type=float, default=3600, help="Timeout for each individual task in seconds")
+    parser.add_argument("--num_experiences", type=int, default=30, help="Number of experiences to maintain")
+    parser.add_argument("--experience_sampling_mode", type=str, default="query", choices=["query", "rollout"])
 
     args = parser.parse_args()
     asyncio.run(main(args))

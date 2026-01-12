@@ -124,7 +124,7 @@ def run_check_function(test_code: str, code: str) -> dict:
         with open(os.devnull, "w") as devnull, redirect_stdout(devnull):
             exec(code, ns)
     except Exception as e:
-        return {"reward": 0.0, "passed": 0, "total": 0, "errors": [f"response_exec_error: {e}"], "execution_events": [],}
+        return {"reward": 0.0, "passed": 0, "total": 0, "errors": [f"LLM response execution error: {e}"], "execution_events": [],}
 
     candidates = [
         (name, obj)
@@ -132,14 +132,14 @@ def run_check_function(test_code: str, code: str) -> dict:
         if callable(obj) and not name.startswith("__") and hasattr(obj, "__code__")
     ]
     if not candidates:
-        return {"reward": 0.0, "passed": 0, "total": 0, "errors": ["no_callable_candidate_found"], "execution_events": [],}
+        return {"reward": 0.0, "passed": 0, "total": 0, "errors": ["no callable candidate found"], "execution_events": [],}
     
     candidate_func = candidates[0][1]
 
     try:
         exec(test_code, ns)
     except Exception as e:
-        return {"reward": 0.0, "passed": 0, "total": 0, "errors": [f"testcode_exec_error: {e}"], "execution_events": [],}
+        return {"reward": 0.0, "passed": 0, "total": 0, "errors": [f"test code execution error: {e}"], "execution_events": [],}
     
     total = 0
     passed = 0
@@ -179,7 +179,7 @@ def run_check_function(test_code: str, code: str) -> dict:
             else:
                 check_fn()
             passed = total
-        except AssertionError:
+        except AssertionError: # 하나씩 실행하면서 어떤 테스트 케이스가 실패했는지 기록
             error = []
             passed = 0
             for line in test_code.splitlines():
@@ -189,18 +189,20 @@ def run_check_function(test_code: str, code: str) -> dict:
                         passed += 1
                     except Exception:
                         error.append(f"Failed assertion: {line.strip()}")
+                        execution_events = []
         except Exception as e:
             error = [f"test_runtime_error: {e}"]
             total = test_code.count("assert")
             passed = 0
+            execution_events = []
         finally:
             sys.settrace(None)
     finally:
         if sys.gettrace() is tracer:
             sys.settrace(None)
         
-
-    reward = 1 if passed == total else 0
+    execution_events = execution_events[:5] if len(execution_events) > 5 else None
+    reward = 1 if passed == total else passed / total
     result = {
         "reward": reward, "passed": passed, "total": total, "errors": error if passed != total else None, "execution_events": execution_events
     }
