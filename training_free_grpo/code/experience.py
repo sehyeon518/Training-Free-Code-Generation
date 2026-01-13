@@ -78,15 +78,15 @@ class ExperienceUpdater:
 
         all_rollouts_to_process = []
         for rollouts in problems_to_rollouts.values():
-            all_rollouts_to_process.extend(rollouts)
-            # if given_ground_truth and only_partial_correct:
-            #     # only for those partially correct
-            #     scores = [each["reward"] for each in rollouts]
-            #     avg_score = sum(scores) / len(scores)
-            #     if avg_score > 0 and avg_score < 1:
-            #         all_rollouts_to_process.extend(rollouts)
-            # else:
-            #     all_rollouts_to_process.extend(rollouts)
+            # all_rollouts_to_process.extend(rollouts)
+            if given_ground_truth and only_partial_correct:
+                # only for those partially correct
+                scores = [each["reward"] for each in rollouts]
+                avg_score = sum(scores) / len(scores)
+                if avg_score > 0 and avg_score < 1:
+                    all_rollouts_to_process.extend(rollouts)
+            else:
+                all_rollouts_to_process.extend(rollouts)
 
         def process(cur):
             try:

@@ -143,59 +143,12 @@ def inherit_experience_probs(
         alpha_add=0.5, delta_modify=0.1, alpha_merge=0.6,
         min_prob=1e-6,
     ):
+    # Seohee TODO: implement proper inheritance logic
+    # Merge: avg
+    # Modify: inherit
 
-    old_ids = list(old_experiences.keys())
-    old_texts = list(old_experiences.values())
-    old_probs_list = [old_probs.get(k, 0.0) for k in old_ids]
-
-    new_texts = list(batch_update_result["new_experiences"].values())
-    revision_plan = batch_update_result.get("revision_plan", [])
-
-    merged_source_texts = []
-    for op in revision_plan:
-        if op["option"] == "merge":
-            merged_source_texts.append(
-                [old_experiences[o] for o in op["merged_from"] if o in old_experiences]
-            )
-
-    new_probs_list = []
-
-    for new_text in new_texts:
-        # Case 1: survived / modified
-        if new_text in old_texts:
-            j = old_texts.index(new_text)
-            p_old = old_probs_list[j]
-            new_probs_list.append(max((1 - delta_modify) * p_old, min_prob))
-            continue
-
-        # Case 2: merge result
-        merged = None
-        for src_texts in merged_source_texts:
-            if new_text not in src_texts:
-                # merged result replaces these
-                merged = src_texts
-                break
-
-        if merged:
-            ps = [old_probs_list[old_texts.index(t)] for t in merged if t in old_texts]
-            if ps:
-                p_merge = alpha_merge * max(ps) + (1 - alpha_merge) * (sum(ps) / len(ps))
-            else:
-                p_merge = min_prob
-            new_probs_list.append(max(p_merge, min_prob))
-            continue
-
-        # Case 3: add
-        new_probs_list.append(min_prob)
-
-    total = sum(new_probs_list)
-    if total > 0:
-        new_probs_list = [p / total for p in new_probs_list]
-
-    # new_ids = list(batch_update_result["new_experiences"].keys())
-    # return dict(zip(new_ids, new_probs_list))
     new_experience_probs = {
-        f"G{i}": new_probs_list[i] for i in range(len(new_texts))
+        f"G{i}": 0.5 for i in range(len(batch_update_result["new_experiences"].values()))
     }
     return new_experience_probs
 
@@ -236,5 +189,7 @@ def compute_next_experience_probs(
         rollout_scores,
         eta, min_prob
     )
+    # TODO: Rewrite inheritance logic (Seohee)
+    # Revise arguments, logic, etc.
 
     return new_probs

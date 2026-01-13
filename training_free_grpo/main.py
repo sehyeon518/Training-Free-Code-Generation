@@ -14,7 +14,7 @@ from utu.config import ConfigLoader
 from utu.utils import AgentsUtils
 from utu.agents.common import TaskRecorder
 from training_free_grpo.llm import LLM
-
+from training_free_grpo.util_coex import sample_experiences_uniform_k, sample_experiences # TODO: Convert to new function
 
 def load_rollouts(rollout_filename: str) -> list[dict]:
     results = []
@@ -119,7 +119,7 @@ async def rollout_dataset(
                         json.dumps(ev, ensure_ascii=False) for ev in exec_events
                     )
                 else:
-                    exec_events = exec_result.get("errors", [])
+                    exec_events = exec_result.get("errors") or []
                     sample["execution_feedback"] = "\n".join(exec_events)
                 # Task succeeded
                 rollouts[sample["runid"]] = sample
@@ -227,7 +227,16 @@ async def main(args):
     
     if args.experience_file:
         experiences = json.load(open(args.experience_file))
-        formatted_experiences = "\n".join([f"[{i}]. {e}" for i, e in experiences.items()])
+        if args.experience_sampling_mode == "uniform":
+            sampled_experiences = sample_experiences_uniform_k(experiences, k=args.num_experiences)
+        elif args.experience_sampling_mode == "grpo": # TODO: Seohee's new function
+            experience_dir = os.path.dirname(args.experience_file)
+            experience_prob_file = os.path.join(experience_dir, "experience_probs.json")
+            experience_probs = json.load(open(os.path.join(experience_prob_file, "experience_probs.json")))
+            sampled_experiences = sample_experiences(experiences, experience_probs, k=args.num_experiences) # TODO: Convert to new function
+        else:
+            sampled_experiences = experiences
+        formatted_experiences = "\n".join([f"[{i}]. {e}" for i, e in sampled_experiences.items()])
         formatted_test_data = [
             {
                 "prompt": PROBLEM_WITH_EXPERIENCE_TEMPLATE.format(
@@ -272,6 +281,8 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", type=str, required=True, help="Name of dataset")
     parser.add_argument("--dataset_truncate", type=int, default=None, help="Truncate dataset to first N samples")
     parser.add_argument("--experience_file", type=str, default=None)
+    parser.add_argument("--num_experiences", type=int, default=30, help="Number of experiences to maintain")
+    parser.add_argument("--experience_sampling_mode", type=str, default=None, choices=["uniform", "grpo"])
     parser.add_argument("--rollout_concurrency", type=int, default=1, help="Concurrency level for rollouts")
     parser.add_argument("--rollout_max_tokens", type=int, default=16384, help="Max tokens for each rollout")
     parser.add_argument("--pass_k", type=int, default=1, help="Pass@k metric")
