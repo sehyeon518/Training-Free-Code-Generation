@@ -5,6 +5,7 @@ import asyncio
 import copy
 import time
 import traceback
+import random
 
 from tqdm import tqdm
 from collections import defaultdict
@@ -14,7 +15,7 @@ from utu.config import ConfigLoader
 from utu.utils import AgentsUtils
 from utu.agents.common import TaskRecorder
 from training_free_grpo.llm import LLM
-from training_free_grpo.util_coex import sample_experiences_uniform_k, sample_experiences # TODO: Convert to new function
+from training_free_grpo.util_coex import sample_experiences_uniform_k, sample_experiences_grpo
 
 def load_rollouts(rollout_filename: str) -> list[dict]:
     results = []
@@ -225,35 +226,40 @@ async def main(args):
         print(f"- truncated to {args.dataset_truncate}")
         test_data = test_data[: args.dataset_truncate]
     
-    if args.experience_file:
-        experiences = json.load(open(args.experience_file))
-        if args.experience_sampling_mode == "uniform":
-            sampled_experiences = sample_experiences_uniform_k(experiences, k=args.num_experiences)
-        elif args.experience_sampling_mode == "grpo": # TODO: Seohee's new function
-            experience_dir = os.path.dirname(args.experience_file)
-            experience_prob_file = os.path.join(experience_dir, "experience_probs.json")
-            experience_probs = json.load(open(os.path.join(experience_prob_file, "experience_probs.json")))
-            sampled_experiences = sample_experiences(experiences, experience_probs, k=args.num_experiences) # TODO: Convert to new function
-        else:
-            sampled_experiences = experiences
-        formatted_experiences = "\n".join([f"[{i}]. {e}" for i, e in sampled_experiences.items()])
-        formatted_test_data = [
-            {
-                "prompt": PROBLEM_WITH_EXPERIENCE_TEMPLATE.format(
-                    experiences=formatted_experiences,
-                    problem=each["problem"],
-                    language=each.get("language", "python"),    
-                ),
-                **each,
-            }
-            for each in test_data
-        ]
-    else:
-        formatted_test_data = [{"prompt": each["problem"], **each} for each in test_data]
+    formatted_test_data = []
+    for each in test_data:
+        for rollout_idx in range(args.pass_k):
+            experiences = json.load(open(args.experience_file)) if args.experience_file else None
+            if experiences:
+                if args.experience_sampling_mode == "uniform":
+                    sampled_experiences = sample_experiences_uniform_k(experiences, k=args.num_experiences)
+                elif args.experience_sampling_mode == "grpo":
+                    experience_dir = os.path.dirname(args.experience_file)
+                    experience_prob_file = os.path.join(experience_dir, "experience_probs.json")
+                    experience_probs = json.load(open(experience_prob_file, encoding="utf-8"))
 
-    # Duplicate for Pass@k evaluation
-    formatted_test_data = formatted_test_data * args.pass_k
-    print(f"Duplicated to {len(formatted_test_data)} records for Pass@{args.pass_k} evaluation")
+                    sampled_experiences = sample_experiences_grpo(experiences, experience_probs, k=args.num_experiences, rng=random) # TODO: Seohee's new function
+                else:
+                    sampled_experiences = experiences
+                formatted_experiences = "\n".join(
+                    [f"[{i}]. {e}" for i, e in sampled_experiences.items()]
+                )
+            else:
+                sampled_experiences = {}
+                formatted_experiences = "None"
+
+            
+            formatted_test_data.append(
+                {
+                    "prompt": PROBLEM_WITH_EXPERIENCE_TEMPLATE.format(
+                        experiences=formatted_experiences,
+                        problem=each["problem"],
+                        language=each.get("language", "python"),    
+                    ),
+                    **each,
+                    "sampled_experience_ids": list(sampled_experiences.keys()),
+                }
+            )
 
     # Load existing rollouts
     os.makedirs(f"data/{args.domain}/eval", exist_ok=True)

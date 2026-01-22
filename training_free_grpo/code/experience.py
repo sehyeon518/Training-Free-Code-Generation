@@ -1,6 +1,7 @@
 import json
 import copy
 import os
+import re 
 
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -96,8 +97,6 @@ class ExperienceUpdater:
                     SINGLE_ROLLOUT_SUMMARY_TEMPLATE.format(
                         trajectory=cur["trajectories"][0]["trajectory"], 
                         grade="This trajectory delivers **" + ("correct" if cur["reward"] == 1.0 else "wrong") + "** answer" + "\n" + execution_feedback, 
-                        # grade="This trajectory delivers **" + ("correct" if cur["reward"] == 1.0 else "wrong") + "** answer", # reward as math
-                        # answer=cur["groundtruth"]
                     ) if given_ground_truth else
                     SINGLE_ROLLOUT_SUMMARY_TEMPLATE.format(
                         trajectory=cur["trajectories"][0]["trajectory"]
@@ -159,18 +158,17 @@ class ExperienceUpdater:
         def process(rollouts_per_problem):
             try:
                 problem = rollouts_per_problem[0]["problem"]
-                # answer = rollouts_per_problem[0]["groundtruth"]
                 formatted_trajectories = "\n\n".join([
                     f"Trajectory {i+1} (Answer {'correct' if each['reward'] else 'wrong'}):\n{each['trajectory_summary']}"
                     for i, each in enumerate(rollouts_per_problem)
                 ])
                 formatted_experiences = "\n".join([ f"[{i}]. {e}" for i, e in experiences.items() ]) if experiences else "None"
+                
                 response = self.llm.chat(
                     SINGLE_QUERY_CRITIQUE_TEMPLATE.format(
                         max_operations=max_operations,
                         problem=problem,
                         trajectories=formatted_trajectories,
-                        # answer=answer,
                         experiences=formatted_experiences,
                     ) if given_ground_truth else
                     SINGLE_QUERY_CRITIQUE_TEMPLATE.format(
@@ -182,8 +180,33 @@ class ExperienceUpdater:
                         experiences=formatted_experiences
                     )
                 )
-                response = response.split("```json")[-1].split("```")[0]
-                operations = json.loads(response)
+
+                json_str = response
+                if "```json" in response:
+                    json_str = response.split("```json")[1].split("```")[0]
+                elif "```" in response:
+                    json_str = response.split("```")[1].split("```")[0]
+                
+                json_str = json_str.strip()
+                # Invalid escape fix (\frac -> \\frac)
+                json_str = re.sub(r'\\(?![/u"bfnrt\\])', r'\\\\', json_str)
+
+                try:
+                    operations = json.loads(json_str)
+                except json.JSONDecodeError:
+                    # Retry by finding the outermost brackets
+                    match = re.search(r'(\{.*\}|\[.*\])', json_str, re.DOTALL)
+                    if match:
+                        extracted = match.group(0)
+                        extracted = re.sub(r'\\(?![/u"bfnrt\\])', r'\\\\', extracted)
+                        operations = json.loads(extracted)
+                    else:
+                        raise
+                
+                # Ensure operations is a list
+                if isinstance(operations, dict):
+                    operations = [operations]
+
                 return {"rollouts": rollouts_per_problem, "critique": response, "operations": operations[:max_operations]}
             except Exception as e:
                 print(f"Warning: failed in single query critique, {e}")
@@ -231,12 +254,19 @@ class ExperienceUpdater:
         candidate_experiences = copy.deepcopy(experiences)
         to_modify = []
         max_ID = 0
+        
         for operation in all_operations:
+            if not isinstance(operation, dict):
+                continue
+            if "option" not in operation:
+                # print(f"Skipping invalid operation (no 'option' key): {operation}")
+                continue
+
             if operation["option"] == "modify":
-                if operation["modified_from"] in candidate_experiences:
+                if operation.get("modified_from") in candidate_experiences:
                     to_modify.append(operation)
             elif operation["option"] == "add":
-                candidate_experiences[f"C{max_ID}"] = operation["experience"]
+                candidate_experiences[f"C{max_ID}"] = operation.get("experience", "")
                 max_ID += 1
 
         print("- Num of added experiences:", max_ID)
@@ -245,6 +275,7 @@ class ExperienceUpdater:
 
         # use LLM to get the revision plan
         revision_plan = []
+        response = "" 
         for _ in range(max_retries):
             try:
                 response = self.llm.chat(
@@ -253,7 +284,17 @@ class ExperienceUpdater:
                         updates=to_modify
                     )
                 )
-                revision_plan = json.loads(response.split("```json")[-1].split("```")[0])
+                
+                # Robust parsing for revision plan as well
+                json_str = response
+                if "```json" in response:
+                    json_str = response.split("```json")[1].split("```")[0]
+                elif "```" in response:
+                    json_str = response.split("```")[1].split("```")[0]
+                json_str = json_str.strip()
+                json_str = re.sub(r'\\(?![/u"bfnrt\\])', r'\\\\', json_str)
+                
+                revision_plan = json.loads(json_str)
                 break
             except Exception:
                 print("Warning: failed to decode in updating general experiences")
@@ -262,16 +303,22 @@ class ExperienceUpdater:
         new_experiences = copy.deepcopy(candidate_experiences)
         for operation in revision_plan:
             try:
-                if operation["option"] == "modify":
-                    new_experiences[operation["modified_from"]] = operation["experience"]
-                elif operation["option"] == "merge":
-                    for ID in operation["merged_from"]:
+                opt = operation.get("option")
+                
+                if opt == "modify":
+                    mod_from = operation.get("modified_from")
+                    if mod_from:
+                        new_experiences[mod_from] = operation.get("experience", "")
+                
+                elif opt == "merge":
+                    merged_from = operation.get("merged_from", [])
+                    for ID in merged_from:
                         if ID not in new_experiences:
-                            raise Exception(f"ID {ID} not found for merging")
-                    for ID in operation["merged_from"]:
+                            continue
+                    for ID in merged_from:
                         if ID in new_experiences:
                             del new_experiences[ID]
-                    new_experiences[f"C{max_ID}"] = operation["experience"]
+                    new_experiences[f"C{max_ID}"] = operation.get("experience", "")
                     max_ID += 1
             except Exception as e:
                 print("Error: failed to complete experience update:", operation, "|", e)

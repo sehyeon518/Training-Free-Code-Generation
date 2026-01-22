@@ -111,11 +111,14 @@ async def main(args):
             
             if step > 0:
                 experience_filename = os.path.join(cur_step_dir, "experiences.json")
-                experiences = json.load(open(experience_filename))
-                experience_probs = json.load(open(os.path.join(cur_step_dir, "experience_probs.json")))
+                experiences = json.load(open(experience_filename, encoding="utf-8"))
+
+                prob_path = os.path.join(cur_step_dir, "experience_probs.json")
+                experience_probs = load_and_init_experience_probs(experiences, prob_path)
             else:
                 experiences = {}
                 experience_probs = {}
+
 
             print(f"Loaded {len(experience_probs)} experience probabilities")
 
@@ -126,7 +129,7 @@ async def main(args):
                         if args.experience_sampling_mode == "uniform":
                             sampled_experiences = sample_experiences_uniform_k(experiences, k=args.num_experiences)
                         elif args.experience_sampling_mode == "grpo": # TODO: Seohee's new function
-                            sampled_experiences = sample_experiences(experiences, experience_probs, k=args.num_experiences)
+                            sampled_experiences = sample_experiences_grpo(experiences, experience_probs, k=args.num_experiences,rng=random)
                         else:
                             sampled_experiences = experiences
                         formatted_experiences = "\n".join(
@@ -191,18 +194,36 @@ async def main(args):
                 json.dump(new_experiences, open(next_experience_filename, "w"), indent=2)
                 print(f"Saved {len(new_experiences)} experiences to {next_experience_filename}")
 
-            # Extract "saumpled_experience_ids" from partial_correct rollouts 
+            # Extract "sampled_experience_ids" from partial_correct rollouts
             critique_path = os.path.join(cur_step_dir, "single_query_critique.json")
             problem_results = json.load(open(critique_path, encoding="utf-8"))
+
+            batch_update_path = os.path.join(cur_step_dir, "batch_update.json")
+            batch_update_result = json.load(open(batch_update_path, encoding="utf-8"))
+
+            next_experiences = json.load(open(next_experience_filename, encoding="utf-8"))
+
             next_experience_probs_filename = os.path.join(next_step_dir, "experience_probs.json")
-            operations = json.load(open(os.path.join(cur_step_dir, "batch_update.json")))["operations"]
-            batch_update_result = json.load(open(os.path.join(cur_step_dir, "batch_update.json")))
-            new_experience_probs = compute_next_experience_probs( # TODO: Seohee's new function
-                experiences, experience_probs, batch_update_result, operations,
-                rollout_scores=accumulate_experience_scores_from_rollouts(problem_results),
+            debug_filename = os.path.join(cur_step_dir, "debug.json")
+            _ = load_and_init_experience_probs(next_experiences, next_experience_probs_filename)
+
+
+            new_experience_probs, debug_obj = compute_next_experience_probs(
+                experiment_dir=experiment_dir,
+                cur_step=step,
+                cur_experiences=experiences,
+                cur_probs=experience_probs,
+                problem_results=problem_results,
+                batch_update_result=batch_update_result,
+                next_experiences=next_experiences,
             )
+
             with open(next_experience_probs_filename, "w") as f:
-                json.dump(new_experience_probs, f, indent=2)
+                json.dump(new_experience_probs, f, indent=2, ensure_ascii=False)
+
+            with open(debug_filename, "w") as f:
+                json.dump(debug_obj, f, indent=2, ensure_ascii=False)
+
             # Save stats
             stats[f"step_{step}"]["complete"] = True
             json.dump(stats, open(stats_filename, "w"), indent=2)
@@ -223,7 +244,7 @@ if __name__ == "__main__":
     parser.add_argument("--rollout_concurrency", type=int, default=1, help="Concurrency level for rollouts")
     parser.add_argument("--rollout_temperature", type=float, default=0.7, help="Temperature for the LLM")
     parser.add_argument("--rollout_max_tokens", type=int, default=16384, help="Max tokens for each rollout batch")
-    parser.add_argument("--task_timeout", type=float, default=3600, help="Timeout for each individual task in seconds")
+    parser.add_argument("--task_timeout", type=float, default=60, help="Timeout for each individual task in seconds")
     parser.add_argument("--num_experiences", type=int, default=30, help="Number of experiences to maintain")
     parser.add_argument("--experience_sampling_mode", type=str, default=None, choices=["uniform", "grpo"])
 
