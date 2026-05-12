@@ -92,16 +92,13 @@ async def rollout_dataset(
                         )
                 else:
                     async with worker_agent as agent:
-                        async def rollout_streamed(sample) -> TaskRecorder:
+                        async def rollout_sample(sample) -> TaskRecorder:
                             prompt = sample.get("prompt", sample["problem"])
-                            res = agent.run_streamed(prompt)
-                            async for _ in res.stream_events(): pass
-                            traj = AgentsUtils.get_trajectory_from_agent_result(res)
-                            return TaskRecorder(
-                                final_output=res.final_output,
-                                trajectories=[traj],
-                            )
-                        res = await asyncio.wait_for(rollout_streamed(sample), timeout=task_timeout)
+                            res = await agent.run(prompt)
+                            if not res.final_output:
+                                raise RuntimeError("Agent returned empty final_output")
+                            return res
+                        res = await asyncio.wait_for(rollout_sample(sample), timeout=task_timeout)
                 
                 task_end_time = time.time()
                 sample.update(

@@ -63,11 +63,7 @@ def verify_func(sample: dict, tests: dict, timeout_sec: float = 2.0) -> dict:
         return run_check_function(tests["code"], sample["response"])
 
     elif test_type == "stdin_stdout":
-        if language in ("cpp", "c++"):
-            reward = run_stdio_cpp(tests, sample["response"], timeout_sec=timeout_sec)
-        else:
-            # 혹시 python stdin_stdout 데이터셋이 있을 경우 대비
-            reward = run_stdio_python(tests, sample["response"])
+        return run_stdio_python(tests, sample["response"], timeout_sec) 
     else:
         reward = {
             "reward": 0.0,
@@ -226,73 +222,70 @@ def parse_input_to_args(arg_str: str):
 
 # ===== Python stdin/stdout 실행 (혹시 있을 Python용 stdin_stdout 데이터셋 대비) =====
 
-def run_stdio_python(tests: dict, code: str) -> dict:
-    import sys
+def run_stdio_python(tests: dict, code: str, timeout_sec: float = 2.0) -> dict:
+    import os
+    import subprocess
+    import tempfile
 
-    ns = {}
-    try:
-        exec(code, ns)
-    except Exception as e:
+    total = len(tests["input"])
+    if total == 0:
         return {
             "reward": 0.0,
             "passed": 0,
-            "total": len(tests["input"]),
-            "errors": [f"response_exec_error: {e}"],
+            "total": 0,
+            "errors": ["no tests"],
+            "execution_events": [],
         }
 
-    total = len(tests["input"])
     passed = 0
     errors = []
 
-    for idx, (inp, expected_out) in enumerate(zip(tests["input"], tests["output"])):
-        input_lines = inp.splitlines(keepends=True)
-        input_iter = iter(input_lines)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        src_path = os.path.join(tmpdir, "main.py")
 
-        def fake_input(prompt=None):
+        with open(src_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        for idx, (inp, expected_out) in enumerate(zip(tests["input"], tests["output"])):
             try:
-                return next(input_iter).rstrip("\n")
-            except StopIteration:
-                return ""
-        
-        ns_local = ns.copy()
-        ns_local["input"] = fake_input
-        buf = io.StringIO()
-        try:
-            with redirect_stdout(buf):
-                funcs = [
-                    obj for name, obj in ns.items()
-                    if callable(obj) and not name.startswith("__")
-                ]
-                if not funcs:
-                    return {
-                        "reward": 0.0,
-                        "passed": 0,
-                        "total": total,
-                        "errors": ["no_callable_function_found"],
-                        
-                    }
+                run_proc = subprocess.run(
+                    [sys.executable, src_path],
+                    input=inp,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=timeout_sec,
+                )
+            except subprocess.TimeoutExpired:
+                errors.append(f"test_{idx}_timeout")
+                continue
 
-                target_func = funcs[0]
-                target_func()
-        except Exception as e:
-            errors.append(f"test_{idx}_runtime_error: {e}")
-            continue
+            if run_proc.returncode != 0:
+                errors.append(f"test_{idx}_runtime_error: {run_proc.stderr}")
+                continue
 
-        actual_out = buf.getvalue()
-        if actual_out == expected_out:
-            passed += 1
-        else:
-            errors.append(
-                f"test_{idx}_failed: expected={expected_out!r}, got={actual_out!r}"
-            )
+            actual_out = run_proc.stdout
 
-    reward = 1 if passed == total else 0
+            if normalize_output(actual_out) == normalize_output(expected_out):
+                passed += 1
+            else:
+                errors.append(
+                    f"test_{idx}_failed: expected={expected_out!r}, got={actual_out!r}"
+                )
+
+    reward = 1.0 if passed == total else passed / total
+
     return {
         "reward": reward,
         "passed": passed,
         "total": total,
         "errors": errors if passed != total else None,
+        "execution_events": [],
     }
+
+
+def normalize_output(s: str) -> str:
+    return "\n".join(line.rstrip() for line in s.strip().splitlines())
 
 
 def run_stdio_cpp(tests: dict, code: str, timeout_sec: float = 2.0) -> dict:

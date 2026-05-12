@@ -151,14 +151,60 @@ def load_data(name: str) -> List[Dict[str, Any]]:
             }
             data.append(d)
         return data
+
+    elif name == "livecodebench":
+        dataset = load_dataset("livecodebench/code_generation")
+        data = []
+        duplicated_check = set()
+        for each in dataset["test"]:
+            # Skip duplicates
+            question = each.get("question_content", "")
+            marker = "Sample Input 1"
+            if marker in question:
+                question = question[:question.index(marker)].rstrip()
+
+            if question in duplicated_check:
+                continue
+            duplicated_check.add(question)
+
+            # Extract public test cases
+            public_test_cases = each.get("public_test_cases", [])
+            public_test_cases = json.loads(public_test_cases) 
+
+            inputs = [test.get("input", "") for test in public_test_cases]
+            outputs = [test.get("output", "") for test in public_test_cases]
+            
+            # Extract reference solutions
+            reference_solutions = each.get("solutions", [each.get("solution", "")])
+            if isinstance(reference_solutions, str):
+                reference_solutions = [reference_solutions]
+            
+            # Filter out empty solutions
+            reference_solutions = [sol for sol in reference_solutions if sol]
+            # if not reference_solutions:
+            #     continue
+
+            d = {
+                "problem": question,
+                "reference_solutions": reference_solutions,
+                "tests": {
+                    "type": "stdin_stdout",
+                    "input": inputs,
+                    "output": outputs,
+                },
+                "language": each.get("language", "python").lower(),
+            }
+            data.append(d)
+
+        return data
     
-    raise ValueError(f"Unsupported dataset: {name}. Supported datasets are: CodeContests, HumanEval, HumanEvalPlus, MBPP, MBPPPlus.")
+    raise ValueError(f"Unsupported dataset: {name}. Supported datasets are: CodeContests, HumanEval, HumanEvalPlus, MBPP, MBPPPlus, livecodebench.")
 
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", type=str, required=True, help="[CodeContests, HumanEval, HumanEvalPlus, MBPP, MBPPPlus]")
+    parser.add_argument("--dataset", type=str, required=True, help="[CodeContests, HumanEval, HumanEvalPlus, MBPP, MBPPPlus, livecodebench]")
     args = parser.parse_args()
     data = load_data(args.dataset)
     print(f"Loaded {len(data)} samples from {args.dataset} dataset.")

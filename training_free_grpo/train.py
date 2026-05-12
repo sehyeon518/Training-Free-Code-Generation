@@ -163,7 +163,7 @@ async def main(args):
 
             # Rollout the dataset
             rollouts, rollout_stats = await rollout_dataset(
-                worker_agent=worker_agent,
+                worker_agent=None,
                 data=formatted_batch_data,
                 rollouts=rollouts,
                 verify_func=verify_func,

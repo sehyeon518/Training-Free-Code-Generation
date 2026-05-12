@@ -2,6 +2,7 @@ import time
 import openai
 from utu.utils import EnvUtils
 from google import genai
+import re
 
 class LLM:
     def __init__(self):
@@ -14,8 +15,8 @@ class LLM:
             base_url=self.base_url,
         )
 
-    def chat(self, messages_or_prompt, max_tokens=16384, temperature=0, max_retries=3, return_reasoning=False):
-        for _ in range(max_retries):
+    def chat(self, messages_or_prompt, max_tokens=4096, temperature=0, max_retries=3, return_reasoning=False):
+        for attempt in range(max_retries):
             try:
                 if isinstance(messages_or_prompt, str):
                     messages = [{"role": "user", "content": messages_or_prompt}]
@@ -23,32 +24,35 @@ class LLM:
                     messages = messages_or_prompt
                 else:
                     raise ValueError("messages_or_prompt must be a string or a list of messages.")
-
                 response = self.client.chat.completions.create(
                     model=self.model_name,
                     messages=messages,
                     max_tokens=max_tokens,
                     temperature=temperature,
+                    timeout=120.0,
+                    extra_body={
+                        "reasoning_effort": "none",
+                        "reasoning": {"effort": "none"},
+                    },
                 )
-                response_text = response.choices[0].message.content.strip()
-                # response = self.client.models.generate_content(
-                #     model=self.model_name,
-                #     contents=messages[0]["content"], # Note: This handles the message format differently
-                #     config={
-                #         "max_output_tokens": max_tokens,
-                #         "temperature": temperature,
-                #     }
-                # )
 
-                # response_text = response.text
-                # print(response_text)
+                message = response.choices[0].message
+                raw_text = message.content
+
+                if raw_text is None:
+                    raise RuntimeError(f"LLM returned empty content. Full response: {response}")
+
+                response_text = raw_text.strip()
+                reasoning = getattr(message, "reasoning_content", None)
 
                 if return_reasoning:
-                    reasoning = getattr(response.choices[0].message, "reasoning_content", None)
                     return response_text, reasoning
+
                 return response_text
 
             except Exception as e:
-                error = f"An unexpected error occurred: {e}"
-                print(error)
-            time.sleep(10)
+                last_error = e
+                print(f"LLM call failed on attempt {attempt + 1}/{max_retries}: {repr(e)}")
+                time.sleep(3)
+
+        raise RuntimeError(f"LLM call failed after {max_retries} retries") from last_error
